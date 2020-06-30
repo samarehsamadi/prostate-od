@@ -5,7 +5,7 @@ from sklearn.preprocessing import MinMaxScaler
 
 class dataloader:
 
-    def __init__(self, dataset='extended', norm_method='min_max', val_fold=1, crop=None, inv_thresh=0.4, custom_data=None, verbose=0):
+    def __init__(self, dataset='testing', norm_method='min_max', val_fold=1, crop=None, inv_thresh=0.4, custom_data=None, verbose=0):
         # Arguments:
         # dataset = 'balanced' or 'extended'
         # norm method = 'L2', 'min_max', 'max', or None
@@ -35,6 +35,8 @@ class dataloader:
             self.parse_BK('BK_RF_P1_90.mat', val_fold)
         elif (dataset == 'extended'):
             self.parse_BK('BK_RF_P1_90-ext.mat', val_fold)
+        elif (dataset == 'testing'):
+            self.load_bogus(val_fold)
         else:
             raise ValueError('Unexpected value for parameter ~dataset~ (expected ~balanced~ or ~extended~)')
 
@@ -61,13 +63,6 @@ class dataloader:
         if (verbose == 2):
             print("Applying normalization...")
         self.normalize(norm_method)
-
-        # Format data
-        if (verbose == 2):
-            print("Formatting data...")
-        self.data_train, self.inv_train, self.label_train = self.format_data(self.data_train, self.inv_train, self.label_train)
-        self.data_val, self.inv_val, self.label_val = self.format_data(self.data_val, self.inv_val, self.label_val)
-        self.data_test, self.inv_test, self.label_test = self.format_data(self.data_test, self.inv_test, self.label_test)
 
         # Get custom data sets
         if (custom_data == 'benign'):
@@ -161,11 +156,6 @@ class dataloader:
 
             print("------------")
 
-        # Reshape data
-        self.data_train = np.reshape(self.data_train, (self.data_train.shape[0], self.data_train.shape[1], 1))
-        self.data_val = np.reshape(self.data_val, (self.data_val.shape[0], self.data_val.shape[1], 1))
-        self.data_test = np.reshape(self.data_test, (self.data_test.shape[0], self.data_test.shape[1], 1))
-
     def parse_BK(self, dataset, fold):
         # Parses matlab datasets and populates training, validation, and test sets
 
@@ -198,10 +188,12 @@ class dataloader:
             fold4_id = [22, 23, 38, 39, 48, 68, 74, 82]
             train_idx = [False if pid in fold4_id else tr_idx for pid, tr_idx in zip(patient_id, train_idx)]
             val_idx = [True if pid in fold4_id else False for pid in patient_id]
-        else:
+        elif (fold == 5):
             fold5_id = [2, 10, 28, 42, 66, 70, 76, 89, 90]
             train_idx = [False if pid in fold5_id else tr_idx for pid, tr_idx in zip(patient_id, train_idx)]
             val_idx = [True if pid in fold5_id else False for pid in patient_id]
+        else:
+            raise ValueError('Unexpected value for parameter ~val_fold~ (expected 1,2,...,5)')
 
         # Separate train vs test set
         self.data_train = data[train_idx]
@@ -213,6 +205,15 @@ class dataloader:
         self.data_test = data[test_idx]
         self.label_test = label[test_idx]
         self.inv_test = inv[test_idx]
+
+    def load_bogus(self, fold):
+        # Parses bogus numpy data
+
+        # Extract data
+        fn = 'bogus_data_fold_' + str(fold) + '.npy'
+
+        # Parse data
+        self.data_train, self.label_train, self.inv_train, self.data_val, self.label_val, self.inv_val, self.data_test, self.label_test, self.inv_test = np.load(fn, allow_pickle=True)
 
     def normalize(self, norm_method):
 
@@ -424,7 +425,7 @@ class visualizer:
             plt.plot(in_ex, label='input')
             plt.suptitle(str(loss))
             plt.legend()
-            fname = "input-output-benign-" + str(i) + ".png"
+            fname = 'input-output-benign-' + str(i) + '.png'
             plt.savefig(fname)
 
         print("Plotting input-output examples for cancer...")
@@ -438,7 +439,7 @@ class visualizer:
             plt.plot(in_ex, label='input')
             plt.suptitle(str(loss))
             plt.legend()
-            fname = "input-output-cancer-" + str(i) + ".png"
+            fname = 'input-output-cancer-' + str(i) + '.png'
             plt.savefig(fname)
 
     def error_distribution(self, max_samples=10000, hist_range=None):
