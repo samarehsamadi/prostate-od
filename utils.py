@@ -5,14 +5,15 @@ from sklearn.preprocessing import MinMaxScaler
 
 class dataloader:
 
-    def __init__(self, dataset='testing', norm_method='min_max', val_fold=1, crop=None, inv_thresh=0.4, custom_data=None, verbose=0):
+    def __init__(self, dataset='testing', norm_method='min_max', val_fold=1, crop=None, inv_thresh=0.4, custom_data=None, format=True, verbose=0):
         # Arguments:
-        # dataset = 'balanced' or 'extended'
+        # dataset = 'balanced' or 'extended' (or 'testing' for bogus data)
         # norm method = 'L2', 'min_max', 'max', or None
         # fold = between 1 and 5, indicates how validation set is split from training
         # crop = tuple of (start, finish) or None
         # inv_thresh = between 0 and 1 value of involvement we're interested in; can be used in conjunction with ~custom~
         # custom = 'benign', 'cancer', 'high_inv'
+        # format = True to get all data squashed into an array, False to preserve core shapes
         # verbose = 0 for silent, 1 for summary, 2 for summary + progress
 
         # Initialize
@@ -132,20 +133,20 @@ class dataloader:
 
             print("Validation fold:        " + str(val_fold))
 
-            print(" --> Training:          " + str(nc_train_benign+nc_train_cancer) + " total cores (" + str(len(self.data_train)) + " data points)")
-            print("                        " + str(nc_train_benign) + " benign cores (" + str(len(self.byLabel(self.data_train, self.label_train, 0))) +  " data points)")
-            print("                        " + str(nc_train_cancer) + " cancer cores (" + str(len(self.byLabel(self.data_train, self.label_train, 1))) +  " data points)")
-            print("                        " + str(nc_train_hi_inv_cancer) + " high involvement (>=" + str(inv_thresh) + ") cancer cores (" + str(len(self.byInv(self.data_train, self.inv_train, inv_thresh, cond='gt'))) +  " data points)")
+            print(" --> Training:          " + str(nc_train_benign+nc_train_cancer) + " total cores (" + str(self.countSignals(self.data_train)) + " data points)")
+            print("                        " + str(nc_train_benign) + " benign cores (" + str(self.countSignals(self.byLabel(self.data_train, self.label_train, 0))) +  " data points)")
+            print("                        " + str(nc_train_cancer) + " cancer cores (" + str(self.countSignals(self.byLabel(self.data_train, self.label_train, 1))) +  " data points)")
+            print("                        " + str(nc_train_hi_inv_cancer) + " high involvement (>=" + str(inv_thresh) + ") cancer cores (" + str(self.countSignals(self.byInv(self.data_train, self.inv_train, inv_thresh, cond='gt'))) +  " data points)")
 
-            print(" --> Validation:        " + str(nc_val_benign+nc_val_cancer) + " total cores (" + str(len(self.data_val)) + " data points)")
-            print("                        " + str(nc_val_benign) + " benign cores (" + str(len(self.byLabel(self.data_val, self.label_val, 0))) +  " data points)")
-            print("                        " + str(nc_val_cancer) + " cancer cores (" + str(len(self.byLabel(self.data_val, self.label_val, 1))) +  " data points)")
-            print("                        " + str(nc_val_hi_inv_cancer) + " high involvement (>=" + str(inv_thresh) + ") cancer cores (" + str(len(self.byInv(self.data_val, self.inv_val, inv_thresh, cond='gt'))) +  " data points)")
+            print(" --> Validation:        " + str(nc_val_benign+nc_val_cancer) + " total cores (" + str(self.countSignals(self.data_val)) + " data points)")
+            print("                        " + str(nc_val_benign) + " benign cores (" + str(self.countSignals(self.byLabel(self.data_val, self.label_val, 0))) +  " data points)")
+            print("                        " + str(nc_val_cancer) + " cancer cores (" + str(self.countSignals(self.byLabel(self.data_val, self.label_val, 1))) +  " data points)")
+            print("                        " + str(nc_val_hi_inv_cancer) + " high involvement (>=" + str(inv_thresh) + ") cancer cores (" + str(self.countSignals(self.byInv(self.data_val, self.inv_val, inv_thresh, cond='gt'))) +  " data points)")
 
-            print(" --> Testing:           " + str(nc_test_benign+nc_test_cancer) + " total cores (" + str(len(self.data_test)) + " data points)")
-            print("                        " + str(nc_test_benign) + " benign cores (" + str(len(self.byLabel(self.data_test, self.label_test, 0))) +  " data points)")
-            print("                        " + str(nc_test_cancer) + " cancer cores (" + str(len(self.byLabel(self.data_test, self.label_test, 1))) +  " data points)")
-            print("                        " + str(nc_test_hi_inv_cancer) + " high involvement (>=" + str(inv_thresh) + ") cancer cores (" + str(len(self.byInv(self.data_test, self.inv_test, inv_thresh, cond='gt'))) +  " data points)")
+            print(" --> Testing:           " + str(nc_test_benign+nc_test_cancer) + " total cores (" + str(self.countSignals(self.data_test)) + " data points)")
+            print("                        " + str(nc_test_benign) + " benign cores (" + str(self.countSignals(self.byLabel(self.data_test, self.label_test, 0))) +  " data points)")
+            print("                        " + str(nc_test_cancer) + " cancer cores (" + str(self.countSignals(self.byLabel(self.data_test, self.label_test, 1))) +  " data points)")
+            print("                        " + str(nc_test_hi_inv_cancer) + " high involvement (>=" + str(inv_thresh) + ") cancer cores (" + str(self.countSignals(self.byInv(self.data_test, self.inv_test, inv_thresh, cond='gt'))) +  " data points)")
 
             print("Normalization method:   " + str(norm_method))
 
@@ -155,6 +156,14 @@ class dataloader:
                 print("Time-series cropping:   None")
 
             print("------------")
+
+        # Format data
+        if (format is True):
+            if (verbose == 2):
+                print("Formatting data...")
+            self.data_train, self.inv_train, self.label_train = self.format_data(self.data_train, self.inv_train, self.label_train)
+            self.data_val, self.inv_val, self.label_val = self.format_data(self.data_val, self.inv_val, self.label_val)
+            self.data_test, self.inv_test, self.label_test = self.format_data(self.data_test, self.inv_test, self.label_test)
 
     def parse_BK(self, dataset, fold):
         # Parses matlab datasets and populates training, validation, and test sets
@@ -395,6 +404,16 @@ class dataloader:
                     Iout.append(I[i])
                     Yout.append(Y[i])
             return Xout, Iout, Yout
+
+    @staticmethod
+    def countSignals(X):
+        # Counts total number of signals in an array of cores
+
+        count = 0
+        for arr in X:
+            count += arr.shape[0]
+
+        return count
 
 
 class visualizer:
