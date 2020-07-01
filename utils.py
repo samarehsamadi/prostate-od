@@ -345,18 +345,27 @@ class dataloader:
 
     @staticmethod
     def byLabel(X, Y, label, I=None):
-        # returns only rows of X with specified label
+        # returns only cores of X with specified label
         # if all of data, inv, and label are provided, returns all three for entries with specified label
 
         if (X is None or Y is None):
             return None
 
-        mask = Y == label
+        Xout = []
+        for i in range(len(Y)):
+            if (Y[i] == label):
+                Xout.append(X[i])
 
-        if (I is not None):
-            return X[mask], I[mask], Y[mask]
-
-        return X[mask]
+        if (I is None):
+            return Xout
+        else:
+            Iout = []
+            Yout = []
+            for i in range(len(Y)):
+                if (Y[i] == label):
+                    Iout.append(I[i])
+                    Yout.append(Y[i])
+            return Xout, Iout, Yout
 
     @staticmethod
     def byInv(X, I, inv, cond, Y=None):
@@ -366,15 +375,27 @@ class dataloader:
         if (X is None or I is None):
             return None
 
-        if (cond == 'gt'):
-            mask = I >= inv
+        Xout = []
+        for i in range(len(I)):
+            if (cond == 'gt' and I[i] >= inv):
+                Xout.append(X[i])
+            if (cond == 'lt' and I[i] <= inv):
+                Xout.append(X[i])
+
+        if (Y is None):
+            return Xout
         else:
-            mask = I <= inv
+            Iout = []
+            Yout = []
+            for i in range(len(I)):
+                if (cond == 'gt' and I[i] >= inv):
+                    Iout.append(I[i])
+                    Yout.append(Y[i])
+                if (cond == 'lt' and I[i] <= inv):
+                    Iout.append(I[i])
+                    Yout.append(Y[i])
+            return Xout, Iout, Yout
 
-        if (Y is not None):
-            return X[mask], I[mask], Y[mask]
-
-        return X[mask]
 
 class visualizer:
 
