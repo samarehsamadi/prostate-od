@@ -2,10 +2,11 @@ import hdf5storage
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import MinMaxScaler
+import gc
 
 class dataloader:
 
-    def __init__(self, dataset='testing', norm_method='min_max', val_fold=1, crop=None, inv_thresh=0.4, custom_data=None, format=True, verbose=0):
+    def __init__(self, dataset='testing', norm_method='min_max_per_core', val_fold=1, crop=None, inv_thresh=0.4, custom_data=None, format='Hierarchical', verbose=0):
         # Arguments:
         # dataset = 'balanced' or 'extended' (or 'testing' for bogus data)
         # norm method = 'L2', 'min_max', 'max', or None
@@ -13,7 +14,7 @@ class dataloader:
         # crop = tuple of (start, finish) or None
         # inv_thresh = between 0 and 1 value of involvement we're interested in; can be used in conjunction with ~custom~
         # custom = 'benign', 'cancer', 'high_inv'
-        # format = True to get all data squashed into an array, False to preserve core shapes
+        # format = Squashed for all the signals to be concatenated into one massive array, Hierarchical for the signals to be grouped based on patient and then core
         # verbose = 0 for silent, 1 for summary, 2 for summary + progress
 
         # Initialize
@@ -22,12 +23,15 @@ class dataloader:
         self.data_train = None
         self.label_train = None
         self.inv_train = None
+        self.pid_train = None
         self.data_val = None
         self.label_val = None
         self.inv_val = None
+        self.pid_val = None
         self.data_test = None
         self.label_test = None
         self.inv_test = None
+        self.pid_test = None
 
         # Load data
         if (verbose == 2):
@@ -67,9 +71,9 @@ class dataloader:
 
         # Get custom data sets
         if (custom_data == 'benign'):
-            self.data_train, self.inv_train, self.label_train = self.byLabel(self.data_train, self.label_train, 0, self.inv_train)
-            self.data_val, self.inv_val, self.label_val = self.byLabel(self.data_val, self.label_val, 0, self.inv_val)
-            self.data_test, self.inv_test, self.label_test = self.byLabel(self.data_test, self.label_test, 0, self.inv_test)
+            self.data_train, self.inv_train, self.pid_train, self.label_train = self.byLabel(self.data_train, self.label_train, 0, self.inv_train, self.pid_train)
+            self.data_val, self.inv_val, self.pid_val, self.label_val = self.byLabel(self.data_val, self.label_val, 0, self.inv_val, self.pid_val)
+            self.data_test, self.inv_test, self.pid_test, self.label_test = self.byLabel(self.data_test, self.label_test, 0, self.inv_test, self.pid_test)
             nc_train_cancer = 0
             nc_train_hi_inv_cancer = 0
             nc_val_cancer = 0
@@ -77,16 +81,16 @@ class dataloader:
             nc_test_cancer = 0
             nc_test_hi_inv_cancer = 0
         elif (custom_data == 'cancer'):
-            self.data_train, self.inv_train, self.label_train = self.byLabel(self.data_train, self.label_train, 1, self.inv_train)
-            self.data_val, self.inv_val, self.label_val = self.byLabel(self.data_val, self.label_val, 1, self.inv_val)
-            self.data_test, self.inv_test, self.label_test = self.byLabel(self.data_test, self.label_test, 1, self.inv_test)
+            self.data_train, self.inv_train, self.pid_train, self.label_train = self.byLabel(self.data_train, self.label_train, 1, self.inv_train, self.pid_train)
+            self.data_val, self.inv_val, self.pid_val, self.label_val = self.byLabel(self.data_val, self.label_val, 1, self.inv_val, self.pid_val)
+            self.data_test, self.inv_test, self.pid_test, self.label_test = self.byLabel(self.data_test, self.label_test, 1, self.inv_test, self.pid_test)
             nc_train_benign = 0
             nc_val_benign = 0
             nc_test_benign = 0
         elif (custom_data == 'hi_inv'):
-            self.data_train, self.inv_train, self.label_train = self.byInv(self.data_train, self.inv_train, inv_thresh, 'gt', self.label_train)
-            self.data_val, self.inv_val, self.label_val = self.byInv(self.data_val, self.inv_val, inv_thresh, 'gt', self.label_val)
-            self.data_test, self.inv_test, self.label_test = self.byInv(self.data_test, self.inv_test, inv_thresh, 'gt', self.label_test)
+            self.data_train, self.inv_train, self.pid_train, self.label_train = self.byInv(self.data_train, self.inv_train, inv_thresh, 'gt', self.pid_train, self.label_train)
+            self.data_val, self.inv_val, self.pid_val, self.label_val = self.byInv(self.data_val, self.inv_val, inv_thresh, 'gt', self.pid_val, self.label_val)
+            self.data_test, self.inv_test, self.pid_test, self.label_test = self.byInv(self.data_test, self.inv_test, inv_thresh, 'gt', self.pid_test, self.label_test)
             nc_train_benign = 0
             nc_train_cancer = nc_train_hi_inv_cancer
             nc_val_benign = 0
@@ -94,26 +98,32 @@ class dataloader:
             nc_test_benign = 0
             nc_test_cancer = nc_test_hi_inv_cancer
         elif (custom_data == 'benign+hi_inv'):
-            dT, iT, lT = self.byLabel(self.data_train, self.label_train, 0, self.inv_train)
-            dT = np.append(dT, self.byInv(self.data_train, self.inv_train, inv_thresh, 'gt', self.label_train)[0], axis=0)
-            iT = np.append(iT, self.byInv(self.data_train, self.inv_train, inv_thresh, 'gt', self.label_train)[1])
-            lT = np.append(lT, self.byInv(self.data_train, self.inv_train, inv_thresh, 'gt', self.label_train)[2])
+            dT, iT, pT, lT = self.byLabel(self.data_train, self.label_train, 0, self.inv_train, self.pid_train)
+            dT = np.append(dT, self.byInv(self.data_train, self.inv_train, inv_thresh, 'gt', self.pid_train, self.label_train)[0], axis=0)
+            iT = np.append(iT, self.byInv(self.data_train, self.inv_train, inv_thresh, 'gt', self.pid_train, self.label_train)[1])
+            pT = np.append(pT, self.byInv(self.data_train, self.inv_train, inv_thresh, 'gt', self.pid_train, self.label_train)[2])
+            lT = np.append(lT, self.byInv(self.data_train, self.inv_train, inv_thresh, 'gt', self.pid_train, self.label_train)[3])
             self.data_train = dT
             self.inv_train = iT
+            self.pid_train = pT
             self.label_train = lT
-            dV, iV, lV = self.byLabel(self.data_val, self.label_val, 0, self.inv_val)
-            dV = np.append(dV, self.byInv(self.data_val, self.inv_val, inv_thresh, 'gt', self.label_val)[0], axis=0)
-            iV = np.append(iV, self.byInv(self.data_val, self.inv_val, inv_thresh, 'gt', self.label_val)[1])
-            lV = np.append(lV, self.byInv(self.data_val, self.inv_val, inv_thresh, 'gt', self.label_val)[2])
+            dV, iV, pV, lV = self.byLabel(self.data_val, self.label_val, 0, self.inv_val, self.pid_val)
+            dV = np.append(dV, self.byInv(self.data_val, self.inv_val, inv_thresh, 'gt', self.pid_val, self.label_val)[0], axis=0)
+            iV = np.append(iV, self.byInv(self.data_val, self.inv_val, inv_thresh, 'gt', self.pid_val, self.label_val)[1])
+            pV = np.append(pV, self.byInv(self.data_val, self.inv_val, inv_thresh, 'gt', self.pid_val, self.label_val)[2])
+            lV = np.append(lV, self.byInv(self.data_val, self.inv_val, inv_thresh, 'gt', self.pid_val, self.label_val)[3])
             self.data_val = dV
             self.inv_val = iV
+            self.pid_val = pV
             self.label_val = lV
-            dS, iS, lS = self.byLabel(self.data_test, self.label_test, 0, self.inv_test)
-            dS = np.append(dS, self.byInv(self.data_test, self.inv_test, inv_thresh, 'gt', self.label_test)[0], axis=0)
-            iS = np.append(iS, self.byInv(self.data_test, self.inv_test, inv_thresh, 'gt', self.label_test)[1])
-            lS = np.append(lS, self.byInv(self.data_test, self.inv_test, inv_thresh, 'gt', self.label_test)[2])
+            dS, iS, pS, lS = self.byLabel(self.data_test, self.label_test, 0, self.inv_test, self.pid_test)
+            dS = np.append(dS, self.byInv(self.data_test, self.inv_test, inv_thresh, 'gt', self.pid_test, self.label_test)[0], axis=0)
+            iS = np.append(iS, self.byInv(self.data_test, self.inv_test, inv_thresh, 'gt', self.pid_test, self.label_test)[1])
+            pS = np.append(pS, self.byInv(self.data_test, self.inv_test, inv_thresh, 'gt', self.pid_test, self.label_test)[2])
+            lS = np.append(lS, self.byInv(self.data_test, self.inv_test, inv_thresh, 'gt', self.pid_test, self.label_test)[3])
             self.data_test = dS
             self.inv_test = iS
+            self.pid_test = pS
             self.label_test = lS
             nc_train_cancer = nc_train_hi_inv_cancer
             nc_val_cancer = nc_val_hi_inv_cancer
@@ -158,12 +168,18 @@ class dataloader:
             print("------------")
 
         # Format data
-        if (format is True):
-            if (verbose == 2):
-                print("Formatting data...")
-            self.data_train, self.inv_train, self.label_train = self.format_data(self.data_train, self.inv_train, self.label_train)
-            self.data_val, self.inv_val, self.label_val = self.format_data(self.data_val, self.inv_val, self.label_val)
-            self.data_test, self.inv_test, self.label_test = self.format_data(self.data_test, self.inv_test, self.label_test)
+        if (verbose == 2):
+            print("Formatting data...")
+        if (format == 'Squashed'):
+            self.data_train, self.inv_train, self.pid_train, self.label_train = self.format_data_sq(self.data_train, self.inv_train, self.pid_train, self.label_train)
+            self.data_val, self.inv_val, self.pid_val, self.label_val = self.format_data_sq(self.data_val, self.inv_val, self.pid_val, self.label_val)
+            self.data_test, self.inv_test, self.pid_test, self.label_test = self.format_data_sq(self.data_test, self.inv_test, self.pid_test, self.label_test)
+        elif (format == 'Hierarchical'):
+            self.data_train, self.inv_train, self.pid_train, self.label_train = self.format_data_hr(self.data_train, self.inv_train, self.pid_train, self.label_train)
+            self.data_val, self.inv_val, self.pid_val, self.label_val = self.format_data_hr(self.data_val, self.inv_val, self.pid_val, self.label_val)
+            self.data_test, self.inv_test, self.pid_test, self.label_test = self.format_data_hr(self.data_test, self.inv_test, self.pid_test, self.label_test)
+        else:
+            raise ValueError('Unexpected value for parameter ~format~ (expected ~Squashed~ or ~Hierarchical~)')
 
     def parse_BK(self, dataset, fold):
         # Parses matlab datasets and populates training, validation, and test sets
@@ -208,12 +224,15 @@ class dataloader:
         self.data_train = data[train_idx]
         self.label_train = label[train_idx]
         self.inv_train = inv[train_idx]
+        self.pid_train = patient_id[train_idx]
         self.data_val = data[val_idx]
         self.label_val = label[val_idx]
         self.inv_val = inv[val_idx]
+        self.pid_val = patient_id[val_idx]
         self.data_test = data[test_idx]
         self.label_test = label[test_idx]
         self.inv_test = inv[test_idx]
+        self.pid_test = patient_id[test_idx]
 
     def load_bogus(self, fold):
         # Parses bogus numpy data
@@ -222,7 +241,10 @@ class dataloader:
         fn = 'bogus_data_fold_' + str(fold) + '.npy'
 
         # Parse data
-        self.data_train, self.label_train, self.inv_train, self.data_val, self.label_val, self.inv_val, self.data_test, self.label_test, self.inv_test = np.load(fn, allow_pickle=True)
+        try:
+            self.data_train, self.label_train, self.inv_train, self.pid_train, self.data_val, self.label_val, self.inv_val, self.pid_val, self.data_test, self.label_test, self.inv_test, self.pid_test = np.load(fn, allow_pickle=True)
+        except:
+            self.data_train, self.label_train, self.inv_train, self.pid_train, self.data_val, self.label_val, self.inv_val, self.pid_val, self.data_test, self.label_test, self.inv_test, self.pid_test = np.load('./.~datasets/' + fn, allow_pickle=True)
 
     def normalize(self, norm_method):
 
@@ -314,24 +336,59 @@ class dataloader:
         return out
 
     @staticmethod
-    def format_data(data, inv, label):
+    def format_data_sq(data, inv, pid, label):
         # Outputs:
         # X (ndarray): total_data_points by num_timesteps
         # I (ndarray): total_data_points by 1
+        # P (ndarray): total_data_points by 1
         # Y (ndarray): total_data_points by 1
 
-        if (data is None or inv is None or label is None):
+        if (data is None or inv is None or pid is None or label is None):
             return None, None, None
 
         X = np.concatenate(data, axis=0)
         I = np.array([])
         for i in range(len(inv)):
             I = np.append(I, inv[i]*np.ones(data[i].shape[0]))
+        P = np.array([])
+        for i in range(len(pid)):
+            P = np.append(P, pid[i]*np.ones(data[i].shape[0]))
         Y = np.array([])
         for i in range(len(label)):
             Y = np.append(Y, label[i]*np.ones(data[i].shape[0]))
 
-        return X, I, Y
+        X = np.reshape(X, (X.shape[0], X.shape[1], 1))
+
+        return X, I, P, Y
+
+    @staticmethod
+    def format_data_hr(data, inv, pid, label):
+        # Outputs:
+        # X (ndarray): num_patients by num_cores by num_signals by num_timesteps
+        # I (ndarray): num_patients by num_cores by num_signals by num_timesteps
+        # P (ndarray): num_patients by num_cores by num_signals by num_timesteps
+        # Y (ndarray): num_patients by num_cores by num_signals by num_timesteps
+
+        if (data is None or inv is None or pid is None or label is None):
+            return None, None, None
+
+        X = []
+        I = []
+        P = []
+        Y = []
+        for i in range(len(pid)):
+            if (pid[i] in P):
+                idx = P.index(pid[i])
+                X[idx].append(np.reshape(data[i], (data[i].shape[0], data[i].shape[1], 1)))
+                I[idx].append(inv[i])
+                Y[idx].append(label[i])
+            else:
+                P.append(pid[i])
+                X.append([np.reshape(data[i], (data[i].shape[0], data[i].shape[1], 1))])
+                I.append([inv[i]])
+                Y.append([label[i]])
+
+        return X, I, P, Y
 
     @staticmethod
     def crop_data(data, crop):
@@ -353,7 +410,7 @@ class dataloader:
         return out
 
     @staticmethod
-    def byLabel(X, Y, label, I=None):
+    def byLabel(X, Y, label, I=None, P=None):
         # returns only cores of X with specified label
         # if all of data, inv, and label are provided, returns all three for entries with specified label
 
@@ -365,19 +422,21 @@ class dataloader:
             if (Y[i] == label):
                 Xout.append(X[i])
 
-        if (I is None):
+        if (I is None or P is None):
             return Xout
         else:
             Iout = []
+            Pout = []
             Yout = []
             for i in range(len(Y)):
                 if (Y[i] == label):
                     Iout.append(I[i])
+                    Pout.append(P[i])
                     Yout.append(Y[i])
-            return Xout, Iout, Yout
+            return Xout, Iout, Pout, Yout
 
     @staticmethod
-    def byInv(X, I, inv, cond, Y=None):
+    def byInv(X, I, inv, cond, P=None, Y=None):
         # returns only rows of X with involvement satisfying condition
         # if all of data, inv, and label are provided, returns all three for entries with the condition
 
@@ -391,19 +450,22 @@ class dataloader:
             if (cond == 'lt' and I[i] <= inv):
                 Xout.append(X[i])
 
-        if (Y is None):
+        if (P is None or Y is None):
             return Xout
         else:
             Iout = []
+            Pout = []
             Yout = []
             for i in range(len(I)):
                 if (cond == 'gt' and I[i] >= inv):
                     Iout.append(I[i])
+                    Pout.append(P[i])
                     Yout.append(Y[i])
                 if (cond == 'lt' and I[i] <= inv):
                     Iout.append(I[i])
+                    Pout.append(P[i])
                     Yout.append(Y[i])
-            return Xout, Iout, Yout
+            return Xout, Iout, Pout, Yout
 
     @staticmethod
     def countSignals(X):
@@ -423,23 +485,11 @@ class visualizer:
         # Copy over model
         self.model = model
         self.history = history
-
-        # Create test data
-        self.benigns = dataloader(dataset=dataset,
-                                  norm_method=norm_method,
-                                  val_fold=val_fold,
-                                  crop=crop,
-                                  inv_thresh=inv_thresh,
-                                  custom_data='benign',
-                                  verbose=0).data_test
-        self.cancers = dataloader(dataset=dataset,
-                                  norm_method=norm_method,
-                                  val_fold=val_fold,
-                                  crop=crop,
-                                  inv_thresh=inv_thresh,
-                                  custom_data='hi_inv',
-                                  verbose=0).data_test
-
+        self.dataset = dataset
+        self.norm_method = norm_method
+        self.val_fold = val_fold
+        self.crop = crop
+        self.inv_thresh = inv_thresh
 
     def training_curve(self):
         # Plot training curve
@@ -454,9 +504,27 @@ class visualizer:
     def benign_cancer_examples(self, num_examples=5):
         # Plot input-output examples for benign and cancer
 
+        print("Generating data for plotting examples")
+        benigns = dataloader(dataset=self.dataset,
+                             norm_method=self.norm_method,
+                             val_fold=self.val_fold,
+                             crop=self.crop,
+                             inv_thresh=self.inv_thresh,
+                             custom_data='benign',
+                             format='Squashed',
+                             verbose=0).data_test
+        cancers = dataloader(dataset=self.dataset,
+                             norm_method=self.norm_method,
+                             val_fold=self.val_fold,
+                             crop=self.crop,
+                             inv_thresh=self.inv_thresh,
+                             custom_data='hi_inv',
+                             format='Squashed',
+                             verbose=0).data_test
+
         print("Plotting input-output examples for benign...")
         for i in range(num_examples):
-            sample = np.reshape(self.benigns[np.random.randint(len(self.benigns)),:,0], (1, -1, 1))
+            sample = np.reshape(benigns[np.random.randint(len(benigns)),:,0], (1, -1, 1))
             out_ex = np.reshape(self.model.predict(sample), (-1, 1))
             in_ex = np.reshape(sample, (-1, 1))
             loss = self.model.evaluate(x=sample, y=sample, batch_size=None, verbose=0)
@@ -470,7 +538,7 @@ class visualizer:
 
         print("Plotting input-output examples for cancer...")
         for i in range(num_examples):
-            sample = np.reshape(self.cancers[np.random.randint(len(self.cancers)),:,0], (1, -1, 1))
+            sample = np.reshape(cancers[np.random.randint(len(cancers)),:,0], (1, -1, 1))
             out_ex = np.reshape(self.model.predict(sample), (-1, 1))
             in_ex = np.reshape(sample, (-1, 1))
             loss = self.model.evaluate(x=sample, y=sample, batch_size=None, verbose=0)
@@ -482,23 +550,68 @@ class visualizer:
             fname = 'input-output-cancer-' + str(i) + '.png'
             plt.savefig(fname)
 
-    def error_distribution(self, max_samples=10000, hist_range=None):
+        # Garbage collection
+        del benigns
+        del cancers
+        gc.collect()
+
+    def error_distribution(self, hist_range=None):
         # Plot error distributions
 
-        length = min((len(self.benigns), len(self.cancers), max_samples))
-        print("Calculating error distributions for " + str(length) + " samples of benign and cancer...")
-        benign_samples = self.benigns[0:length,:,:]
-        cancer_samples = self.cancers[0:length,:,:]
-        benign_loss_vec = []
-        cancer_loss_vec = []
-        for i in range(length):
-            benign_signal = np.reshape(benign_samples[i,:,0], (1, -1, 1))
-            cancer_signal = np.reshape(cancer_samples[i,:,0], (1, -1, 1))
-            benign_loss_vec.append(self.model.evaluate(x=benign_signal, y=benign_signal, batch_size=None, verbose=0)) # Source of error: y = [decoder output, clustering]
-            cancer_loss_vec.append(self.model.evaluate(x=cancer_signal, y=cancer_signal, batch_size=None, verbose=0))
-        plt.close()
-        plt.hist(benign_loss_vec, bins=1000, alpha=0.5, range=hist_range, label='benign')
-        plt.hist(cancer_loss_vec, bins=1000, alpha=0.5, range=hist_range, label='hi_inv')
-        plt.legend()
-        plt.savefig('benign-cancer-loss-distrib.png')
+        print("Generating data for plotting examples")
+        testd = dataloader(dataset=self.dataset,
+                           norm_method=self.norm_method,
+                           val_fold=self.val_fold,
+                           crop=self.crop,
+                           inv_thresh=self.inv_thresh,
+                           custom_data=None,
+                           format='Hierarchical',
+                           verbose=0)
+
+        testX = testd.data_test
+        testY = testd.label_test
+        testI = testd.inv_test
+
+        for pid in range(len(testX)):
+            benign_loss_vec = []
+            inv02_loss_vec = []
+            inv04_loss_vec = []
+            inv06_loss_vec = []
+            inv08_loss_vec = []
+            plt.close()
+            print("Plotting error distribution for patient ID " + str(pid))
+            for core in range(len(testX[pid])):
+                if (testY[pid][core] == 1.0):
+                    for signal in range(len(testX[pid][core])):
+                        benign_signal = np.reshape(testX[pid][core][signal], (1, -1, 1))
+                        benign_loss_vec.append(self.model.evaluate(x=benign_signal, y=benign_signal, batch_size=None, verbose=0))
+                if (testI[pid][core] >= 0.2):
+                    for signal in range(len(testX[pid][core])):
+                        inv02_signal = np.reshape(testX[pid][core][signal], (1, -1, 1))
+                        inv02_loss_vec.append(self.model.evaluate(x=inv02_signal, y=inv02_signal, batch_size=None, verbose=0))
+                if (testI[pid][core] >= 0.4):
+                    for signal in range(len(testX[pid][core])):
+                        inv04_signal = np.reshape(testX[pid][core][signal], (1, -1, 1))
+                        inv04_loss_vec.append(self.model.evaluate(x=inv04_signal, y=inv04_signal, batch_size=None, verbose=0))
+                if (testI[pid][core] >= 0.6):
+                    for signal in range(len(testX[pid][core])):
+                        inv06_signal = np.reshape(testX[pid][core][signal], (1, -1, 1))
+                        inv06_loss_vec.append(self.model.evaluate(x=inv06_signal, y=inv06_signal, batch_size=None, verbose=0))
+                if (testI[pid][core] >= 0.2):
+                    for signal in range(len(testX[pid][core])):
+                        inv08_signal = np.reshape(testX[pid][core][signal], (1, -1, 1))
+                        inv08_loss_vec.append(self.model.evaluate(x=inv08_signal, y=inv08_signal, batch_size=None, verbose=0))
+            plt.hist(inv02_loss_vec, bins=1000, alpha=0.6, range=hist_range, histtype=u'step', label='0.2 inv')
+            plt.hist(inv04_loss_vec, bins=1000, alpha=0.6, range=hist_range, histtype=u'step', label='0.4 inv')
+            plt.hist(inv06_loss_vec, bins=1000, alpha=0.6, range=hist_range, histtype=u'step', label='0.6 inv')
+            plt.hist(inv08_loss_vec, bins=1000, alpha=0.6, range=hist_range, histtype=u'step', label='0.8 inv')
+            plt.hist(benign_loss_vec, bins=1000, alpha=0.6, range=hist_range, histtype=u'step', label='benign')
+            print("Inv02: " + str(inv02_loss_vec))
+            print("Inv04: " + str(inv04_loss_vec))
+            print("Inv06: " + str(inv06_loss_vec))
+            print("Inv08: " + str(inv08_loss_vec))
+            print("Bengn: " + str(benign_loss_vec))
+            plt.suptitle("Patient ID: " + str(pid) + " # Cores: " + str(len(testX[pid])))
+            plt.legend()
+            plt.savefig('benign-cancer-loss-distrib-' + str(pid) + '.png')
 
