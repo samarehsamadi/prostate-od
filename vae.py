@@ -25,7 +25,6 @@ class AEOD:
                  inv_thresh=0.4,
                  custom_data='benign',
                  # Network setup
-                 load_model_path = None,
                  n_filters=128,
                  kernel_size=16,
                  strides=1,
@@ -46,7 +45,6 @@ class AEOD:
         self.crop = crop
         self.inv_thresh = inv_thresh
         self.custom_data = custom_data
-        self.load_model_path = load_model_path
         self.n_filters = n_filters
         self.kernel_size = kernel_size
         self.strides = strides
@@ -64,6 +62,10 @@ class AEOD:
         self.autoencoder = None
         self.history = None
         self.dl = None
+
+        # Quick initializations
+        self.input_dim = 1
+        self.timesteps = 200
 
     def visualize(self, num_examples=5, hist_range=None, del_data=True):
 
@@ -118,57 +120,51 @@ class AEOD:
 
     def build_ae(self):
 
-        if (self.load_model_path is None):
+        assert(self.timesteps % self.pool_size == 0)
 
-            assert(self.timesteps % self.pool_size == 0)
+        # Encoder
+        x1 = Input(shape=(self.timesteps, self.input_dim), name='encoder_input')
+        encoded = Conv1D(self.n_filters, self.kernel_size, strides=self.strides, padding='same', activation='linear')(x1)
+        encoded = LeakyReLU()(encoded)
+        encoded = MaxPool1D(self.pool_size)(encoded)
 
-            # Encoder
-            x1 = Input(shape=(self.timesteps, self.input_dim), name='encoder_input')
-            encoded = Conv1D(self.n_filters, self.kernel_size, strides=self.strides, padding='same', activation='linear')(x1)
+        for i in range(len(self.n_units)):
+            encoded = Bidirectional(LSTM(self.n_units[i], return_sequences=True), merge_mode='sum')(encoded)
             encoded = LeakyReLU()(encoded)
-            encoded = MaxPool1D(self.pool_size)(encoded)
 
-            for i in range(len(self.n_units)):
-                encoded = Bidirectional(LSTM(self.n_units[i], return_sequences=True), merge_mode='sum')(encoded)
-                encoded = LeakyReLU()(encoded)
+        encoded_shape = K.int_shape(encoded)
+        encoded_output = Flatten()(encoded)
 
-            encoded_shape = K.int_shape(encoded)
-            encoded_output = Flatten()(encoded)
+        # Create encoder model
+        self.encoder = Model(inputs=x1, outputs=encoded_output, name='encoder')
+        self.encoder.summary()
 
-            # Create encoder model
-            self.encoder = Model(inputs=x1, outputs=encoded_output, name='encoder')
-            self.encoder.summary()
+        # Decoder
+        latent_input = Input(shape=(self.tuple_product(encoded_shape),), name='z_sampling')
+        decoded = Reshape(encoded_shape[1:])(latent_input)
 
-            # Decoder
-            latent_input = Input(shape=(self.tuple_product(encoded_shape),), name='z_sampling')
-            decoded = Reshape(encoded_shape[1:])(latent_input)
+        for i in range(len(self.n_units)):
+            decoded = Bidirectional(LSTM(self.n_units[len(self.n_units)-1-i], return_sequences=True), merge_mode='sum')(decoded)
+            decoded = LeakyReLU()(decoded)
 
-            for i in range(len(self.n_units)):
-                decoded = Bidirectional(LSTM(self.n_units[len(self.n_units)-1-i], return_sequences=True), merge_mode='sum')(decoded)
-                decoded = LeakyReLU()(decoded)
+        decoded = Reshape((-1, 1, self.n_units[0]), name='reshape')(decoded)
+        decoded = UpSampling2D((self.pool_size, 1), name='upsampling')(decoded)
+        decoded = Conv2DTranspose(self.input_dim, (self.kernel_size, 1), padding='same', name='conv2dtranspose')(decoded)
+        decoder_output = Reshape((-1, self.input_dim), name='output_seq')(decoded)
 
-            decoded = Reshape((-1, 1, self.n_units[0]), name='reshape')(decoded)
-            decoded = UpSampling2D((self.pool_size, 1), name='upsampling')(decoded)
-            decoded = Conv2DTranspose(self.input_dim, (self.kernel_size, 1), padding='same', name='conv2dtranspose')(decoded)
-            decoder_output = Reshape((-1, self.input_dim), name='output_seq')(decoded)
+        # Create decoder model
+        self.decoder = Model(inputs=latent_input, outputs=decoder_output, name='decoder')
+        self.decoder.summary()
 
-            # Create decoder model
-            self.decoder = Model(inputs=latent_input, outputs=decoder_output, name='decoder')
-            self.decoder.summary()
+        # Connect components
+        l1 = self.encoder(x1)
+        x2 = self.decoder(l1)
+        l2 = self.encoder(x2)
 
-            # Connect components
-            l1 = self.encoder(x1)
-            x2 = self.decoder(l1)
-            l2 = self.encoder(x2)
+        # Create VAE model
+        self.autoencoder = Model(inputs=x1, outputs=x2, name='autoencoder')
 
-            # Create VAE model
-            self.autoencoder = Model(inputs=x1, outputs=x2, name='autoencoder')
-
-            # self.autoencoder.load_weights('./models/model-ae-epoch-30-0.00.hdf5')
-
-        else:
-
-            self.autoencoder = load_model(self.load_model_path)
+        # self.autoencoder.load_weights('./models/model-ae-epoch-30-0.00.hdf5')
 
         # Loss function
         def custom_loss(y_true, y_pred):

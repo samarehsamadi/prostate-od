@@ -2,13 +2,16 @@ import hdf5storage
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import MinMaxScaler
+import seaborn as sns
+import tensorflow as tf
+import keras
 import gc
 
 class dataloader:
 
     def __init__(self, dataset='testing', norm_method='min_max_per_core', val_fold=1, crop=None, inv_thresh=0.4, custom_data=None, format='Hierarchical', verbose=0):
         # Arguments:
-        # dataset = 'balanced' or 'extended' (or 'testing' for bogus data)
+        # dataset = 'balanced' or 'extended' or 'mixed' (or 'testing' for bogus data)
         # norm method = 'L2', 'min_max', 'max', or None
         # fold = between 1 and 5, indicates how validation set is split from training
         # crop = tuple of (start, finish) or None
@@ -40,10 +43,12 @@ class dataloader:
             self.parse_BK('BK_RF_P1_90.mat', val_fold)
         elif (dataset == 'extended'):
             self.parse_BK('BK_RF_P1_90-ext.mat', val_fold)
+        elif (dataset == 'mixed'):
+            self.parse_BK('BK_RF_P1_90-wcb.mat', val_fold)
         elif (dataset == 'testing'):
             self.load_bogus(val_fold)
         else:
-            raise ValueError('Unexpected value for parameter ~dataset~ (expected ~balanced~ or ~extended~)')
+            raise ValueError('Unexpected value for parameter ~dataset~ (expected ~balanced~ or ~extended~ or ~mixed~)')
 
         # Extract dataset stats
         nc_train_benign = len([label for label in self.label_train if label == 0])
@@ -568,12 +573,20 @@ class visualizer:
                            format='Hierarchical',
                            verbose=0)
 
-        testX = testd.data_test
-        testY = testd.label_test
-        testI = testd.inv_test
+        testX = testd.data_train
+        testY = testd.label_train
+        testI = testd.inv_train
+
+        big_benign = []
+        big_lowinv = []
+        big_inv02 = []
+        big_inv04 = []
+        big_inv06 = []
+        big_inv08 = []
 
         for pid in range(len(testX)):
             benign_loss_vec = []
+            lowinv_loss_vec = []
             inv02_loss_vec = []
             inv04_loss_vec = []
             inv06_loss_vec = []
@@ -581,37 +594,52 @@ class visualizer:
             plt.close()
             print("Plotting error distribution for patient ID " + str(pid))
             for core in range(len(testX[pid])):
-                if (testY[pid][core] == 1.0):
-                    for signal in range(len(testX[pid][core])):
-                        benign_signal = np.reshape(testX[pid][core][signal], (1, -1, 1))
-                        benign_loss_vec.append(self.model.evaluate(x=benign_signal, y=benign_signal, batch_size=None, verbose=0))
+                core_loss_vec = tf.keras.losses.mean_squared_error(np.reshape(testX[pid][core], (testX[pid][core].shape[0], testX[pid][core].shape[1])),
+                                                                   np.reshape(self.model.predict(testX[pid][core], batch_size=None), (testX[pid][core].shape[0], testX[pid][core].shape[1])))
+                if (testY[pid][core] == 0):
+                    benign_loss_vec.extend(core_loss_vec)
+                if (testI[pid][core] < 0.2):
+                    lowinv_loss_vec.extend(core_loss_vec)
                 if (testI[pid][core] >= 0.2):
-                    for signal in range(len(testX[pid][core])):
-                        inv02_signal = np.reshape(testX[pid][core][signal], (1, -1, 1))
-                        inv02_loss_vec.append(self.model.evaluate(x=inv02_signal, y=inv02_signal, batch_size=None, verbose=0))
+                    inv02_loss_vec.extend(core_loss_vec)
                 if (testI[pid][core] >= 0.4):
-                    for signal in range(len(testX[pid][core])):
-                        inv04_signal = np.reshape(testX[pid][core][signal], (1, -1, 1))
-                        inv04_loss_vec.append(self.model.evaluate(x=inv04_signal, y=inv04_signal, batch_size=None, verbose=0))
+                    inv04_loss_vec.extend(core_loss_vec)
                 if (testI[pid][core] >= 0.6):
-                    for signal in range(len(testX[pid][core])):
-                        inv06_signal = np.reshape(testX[pid][core][signal], (1, -1, 1))
-                        inv06_loss_vec.append(self.model.evaluate(x=inv06_signal, y=inv06_signal, batch_size=None, verbose=0))
-                if (testI[pid][core] >= 0.2):
-                    for signal in range(len(testX[pid][core])):
-                        inv08_signal = np.reshape(testX[pid][core][signal], (1, -1, 1))
-                        inv08_loss_vec.append(self.model.evaluate(x=inv08_signal, y=inv08_signal, batch_size=None, verbose=0))
-            plt.hist(inv02_loss_vec, bins=1000, alpha=0.6, range=hist_range, histtype=u'step', label='0.2 inv')
-            plt.hist(inv04_loss_vec, bins=1000, alpha=0.6, range=hist_range, histtype=u'step', label='0.4 inv')
-            plt.hist(inv06_loss_vec, bins=1000, alpha=0.6, range=hist_range, histtype=u'step', label='0.6 inv')
-            plt.hist(inv08_loss_vec, bins=1000, alpha=0.6, range=hist_range, histtype=u'step', label='0.8 inv')
-            plt.hist(benign_loss_vec, bins=1000, alpha=0.6, range=hist_range, histtype=u'step', label='benign')
-            print("Inv02: " + str(inv02_loss_vec))
-            print("Inv04: " + str(inv04_loss_vec))
-            print("Inv06: " + str(inv06_loss_vec))
-            print("Inv08: " + str(inv08_loss_vec))
-            print("Bengn: " + str(benign_loss_vec))
+                    inv06_loss_vec.extend(core_loss_vec)
+                if (testI[pid][core] >= 0.8):
+                    inv08_loss_vec.extend(core_loss_vec)
+            sns.distplot(lowinv_loss_vec, hist=False, kde=True, kde_kws={'shade': True, 'linewidth': 3, 'clip': hist_range}, label='Low Inv')
+            sns.distplot(inv02_loss_vec, hist=False, kde=True, kde_kws={'shade': True, 'linewidth': 3, 'clip': hist_range}, label='>0.2 Inv')
+            sns.distplot(inv04_loss_vec, hist=False, kde=True, kde_kws={'shade': True, 'linewidth': 3, 'clip': hist_range}, label='>0.4 Inv')
+            sns.distplot(inv06_loss_vec, hist=False, kde=True, kde_kws={'shade': True, 'linewidth': 3, 'clip': hist_range}, label='>0.6 Inv')
+            sns.distplot(inv08_loss_vec, hist=False, kde=True, kde_kws={'shade': True, 'linewidth': 3, 'clip': hist_range}, label='>0.8 Inv')
+            sns.distplot(benign_loss_vec, hist=False, kde=True, kde_kws={'shade': True, 'linewidth': 3, 'clip': hist_range}, label='Benign')
+            print("LoInv: " + str(len(lowinv_loss_vec)))
+            print("Inv02: " + str(len(inv02_loss_vec)))
+            print("Inv04: " + str(len(inv04_loss_vec)))
+            print("Inv06: " + str(len(inv06_loss_vec)))
+            print("Inv08: " + str(len(inv08_loss_vec)))
+            print("Bengn: " + str(len(benign_loss_vec)))
             plt.suptitle("Patient ID: " + str(pid) + " # Cores: " + str(len(testX[pid])))
+            plt.xlabel("Mean Sqr Error")
             plt.legend()
             plt.savefig('benign-cancer-loss-distrib-' + str(pid) + '.png')
+            big_benign.extend(benign_loss_vec)
+            big_lowinv.extend(lowinv_loss_vec)
+            big_inv02.extend(inv02_loss_vec)
+            big_inv04.extend(inv04_loss_vec)
+            big_inv06.extend(inv06_loss_vec)
+            big_inv08.extend(inv08_loss_vec)
+
+        plt.close()
+        sns.distplot(big_benign, hist=False, kde=True, kde_kws={'shade': True, 'linewidth': 3, 'clip': hist_range}, label='Benign')
+        sns.distplot(big_lowinv, hist=False, kde=True, kde_kws={'shade': True, 'linewidth': 3, 'clip': hist_range}, label='Low Inv')
+        sns.distplot(big_inv02, hist=False, kde=True, kde_kws={'shade': True, 'linewidth': 3, 'clip': hist_range}, label='>0.2 Inv')
+        sns.distplot(big_inv04, hist=False, kde=True, kde_kws={'shade': True, 'linewidth': 3, 'clip': hist_range}, label='>0.4 Inv')
+        sns.distplot(big_inv06, hist=False, kde=True, kde_kws={'shade': True, 'linewidth': 3, 'clip': hist_range}, label='>0.6 Inv')
+        sns.distplot(big_inv08, hist=False, kde=True, kde_kws={'shade': True, 'linewidth': 3, 'clip': hist_range}, label='>0.8 Inv')
+        plt.suptitle("Totalled loss distributions")
+        plt.xlabel("Mean Sqr Error")
+        plt.legend()
+        plt.savefig('total-benign-cancer-loss-distrib.png')
 
