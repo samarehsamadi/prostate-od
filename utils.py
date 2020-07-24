@@ -583,6 +583,7 @@ class visualizer:
         big_inv04 = []
         big_inv06 = []
         big_inv08 = []
+        hist_bin_num = []
 
         for pid in range(len(testX)):
             benign_loss_vec = []
@@ -592,13 +593,14 @@ class visualizer:
             inv06_loss_vec = []
             inv08_loss_vec = []
             plt.close()
-            print("Plotting error distribution for patient ID " + str(pid))
+            print("Plotting error distribution for patient ID " + str(pid) + " of " + str(len(testX)))
             for core in range(len(testX[pid])):
                 core_loss_vec = tf.keras.losses.mean_squared_error(np.reshape(testX[pid][core], (testX[pid][core].shape[0], testX[pid][core].shape[1])),
                                                                    np.reshape(self.model.predict(testX[pid][core], batch_size=None), (testX[pid][core].shape[0], testX[pid][core].shape[1])))
+                hist_bin_num.append(len(np.histogram_bin_edges(core_loss_vec, bins='scott', range=hist_range))-1)
                 if (testY[pid][core] == 0):
                     benign_loss_vec.extend(core_loss_vec)
-                if (testI[pid][core] < 0.2):
+                if (testI[pid][core] < 0.2 and testY[pid][core] == 1):
                     lowinv_loss_vec.extend(core_loss_vec)
                 if (testI[pid][core] >= 0.2):
                     inv02_loss_vec.extend(core_loss_vec)
@@ -642,4 +644,6 @@ class visualizer:
         plt.xlabel("Mean Sqr Error")
         plt.legend()
         plt.savefig('total-benign-cancer-loss-distrib.png')
+
+        return hist_bin_num
 
