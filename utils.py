@@ -573,9 +573,10 @@ class visualizer:
                            format='Hierarchical',
                            verbose=0)
 
-        testX = testd.data_train
-        testY = testd.label_train
-        testI = testd.inv_train
+        testX = testd.data_test
+        testY = testd.label_test
+        testI = testd.inv_test
+        testP = testd.pid_test
 
         big_benign = []
         big_lowinv = []
@@ -583,7 +584,6 @@ class visualizer:
         big_inv04 = []
         big_inv06 = []
         big_inv08 = []
-        hist_bin_num = []
 
         for pid in range(len(testX)):
             benign_loss_vec = []
@@ -597,8 +597,7 @@ class visualizer:
             for core in range(len(testX[pid])):
                 core_loss_vec = tf.keras.losses.mean_squared_error(np.reshape(testX[pid][core], (testX[pid][core].shape[0], testX[pid][core].shape[1])),
                                                                    np.reshape(self.model.predict(testX[pid][core], batch_size=None), (testX[pid][core].shape[0], testX[pid][core].shape[1])))
-                hist_bin_num.append(len(np.histogram_bin_edges(core_loss_vec, bins='scott', range=hist_range))-1)
-                if (testY[pid][core] == 0):
+               if (testY[pid][core] == 0):
                     benign_loss_vec.extend(core_loss_vec)
                 if (testI[pid][core] < 0.2 and testY[pid][core] == 1):
                     lowinv_loss_vec.extend(core_loss_vec)
@@ -645,5 +644,40 @@ class visualizer:
         plt.legend()
         plt.savefig('total-benign-cancer-loss-distrib.png')
 
-        return hist_bin_num
+    def generate_histograms(self, hist_range=None):
+
+        print("Generating data for plotting examples")
+        testd = dataloader(dataset=self.dataset,
+                           norm_method=self.norm_method,
+                           val_fold=self.val_fold,
+                           crop=self.crop,
+                           inv_thresh=self.inv_thresh,
+                           custom_data=None,
+                           format='Hierarchical',
+                           verbose=0)
+
+        testX = testd.data_test
+        testY = testd.label_test
+        testI = testd.inv_test
+        testP = testd.pid_test
+
+        hist_data = []
+        hist_label = []
+        hist_inv = []
+        hist_pid = []
+
+        for pid in range(len(testX)):
+            print("Creating histogram for patient ID " + str(pid) + " of " + str(len(testX)))
+            for core in range(len(testX[pid])):
+                core_loss_vec = tf.keras.losses.mean_squared_error(np.reshape(testX[pid][core], (testX[pid][core].shape[0], testX[pid][core].shape[1])),
+                                                                   np.reshape(self.model.predict(testX[pid][core], batch_size=None), (testX[pid][core].shape[0], testX[pid][core].shape[1])))
+                hist_data.append(np.histogram(core_loss_vec, bins=50, range=hist_range, density=True))
+                hist_label.append(testY[pid][core])
+                hist_inv.append(testI[pid][core])
+                hist_pid.append(testP[pid])
+
+        save_dict = {'data': hist_data, 'label': hist_label, 'inv': hist_inv, 'PatientId': hist_pid}
+        hdf5storage.write(save_dict)
+
+
 
