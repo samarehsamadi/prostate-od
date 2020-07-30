@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import gc
 
-from keras.models import Model
+from keras.models import Model, load_model
 from keras.layers import Input, Conv1D, LeakyReLU, MaxPool1D, LSTM, Bidirectional, Dense, Reshape
 from keras.layers import Flatten, Lambda
 from keras.layers import UpSampling2D, Conv2DTranspose
@@ -63,7 +63,11 @@ class AEOD:
         self.history = None
         self.dl = None
 
-    def visualize(self, num_examples=5, max_samples=10000, hist_range=None, del_data=True):
+        # Quick initializations
+        self.input_dim = 1
+        self.timesteps = 200
+
+    def visualize(self, num_examples=5, hist_range=None, del_data=True):
 
         if (del_data is True):
             del self.dl
@@ -78,7 +82,7 @@ class AEOD:
 
         vs.training_curve()
         vs.benign_cancer_examples(num_examples)
-        vs.error_distribution(max_samples, hist_range)
+        vs.error_distribution(hist_range)
 
     def fit(self):
 
@@ -89,6 +93,7 @@ class AEOD:
                              crop=self.crop,
                              inv_thresh=self.inv_thresh,
                              custom_data=self.custom_data,
+                             format='Squashed',
                              verbose=2)
 
         # Init network
@@ -107,13 +112,14 @@ class AEOD:
                                             validation_data=[self.dl.data_val, self.dl.data_val],
                                             nb_epoch=self.epochs,
                                             batch_size=self.batch_size,
-                                            verbose=2,
+                                            verbose=1,
                                             callbacks=[early_stop, checkpoint]).history
 
     def predict(self, x):
         return self.autoencoder.predict(x)
 
     def build_ae(self):
+
         assert(self.timesteps % self.pool_size == 0)
 
         # Encoder
